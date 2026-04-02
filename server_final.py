@@ -14,10 +14,12 @@ import urllib.request
 import urllib.error
 import urllib.parse
 import pickle
+import threading
 from pathlib import Path
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
-
+# ── In-memory job store ──────────────────────────────────────────────────────
+JOB_STORE: dict = {}
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 API_KEY     = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -30,13 +32,23 @@ LOG_DIR     = BASE_DIR / "logs"
 OUTPUT_DIR.mkdir(exist_ok=True)
 LOG_DIR.mkdir(exist_ok=True)
 
+# ── Decode OAuth client from env var if present (for Render deployment) ────────
+import base64
+_oauth_b64 = os.environ.get("OAUTH_CLIENT_B64", "")
+if _oauth_b64 and not OAUTH_FILE.exists():
+    try:
+        OAUTH_FILE.parent.mkdir(parents=True, exist_ok=True)
+        OAUTH_FILE.write_bytes(base64.b64decode(_oauth_b64))
+    except Exception as _e:
+        print(f"Warning: Could not decode OAUTH_CLIENT_B64: {_e}")
+
 MAX_RESUME_CHARS    = 50000
 MAX_JD_CHARS        = 50000
 REQUEST_TIMEOUT     = 75
 MODEL_NAME          = "claude-sonnet-4-20250514"
 COMPILE_TIMEOUT_SEC = 120
 
-DRIVE_FOLDER_ID = os.environ.get("DRIVE_FOLDER_ID", "11W8kQ1r_sXQ6eAKJwRsuIRc8TWFT4MIf")
+DRIVE_FOLDER_ID = os.environ.get("DRIVE_FOLDER_ID", "")
 OAUTH_FILE      = BASE_DIR / "credentials" / "oauth_client.json"
 TOKEN_FILE      = BASE_DIR / "credentials" / "token.pickle"
 SCOPES          = ["https://www.googleapis.com/auth/drive.file"]
@@ -344,6 +356,70 @@ def upload_to_google_drive(pdf_path: Path, filename: str) -> str:
     log.info("Uploaded to Drive: %s", link)
     return link
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Background job processor
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _process_job(job_id: str, jd: str, mode: str, company: str, role: str):
+    """Runs in a background thread. Stores result in JOB_STORE."""
+    try:
+        jd    = jd[:MAX_JD_CHARS]
+        latex = read_base_resume()
+
+        jd_analysis = validate_jd_analysis(
+            call_anthropic_json(JD_ANALYSIS_PROMPT,
+                f"LATEX RESUME:\n{latex}\n\nJOB DESCRIPTION:\n{jd}\n")
+        )
+
+        result = validate_generation_result(
+            call_anthropic_json(GENERATION_PROMPT,
+                f"Optimization mode: {mode}\nTarget Company: {company}\nTarget Role: {role}\n\n"
+                f"LATEX RESUME:\n{latex}\n\nJOB DESCRIPTION:\n{jd}\n\n"
+                f"JD ANALYSIS:\n{json.dumps(jd_analysis,ensure_ascii=False)}")
+        )
+
+        missing, recomputed_cov = compute_missing_keywords(jd_analysis, result["latexCode"])
+        result["missingKeywords"]   = missing
+        result["categoryCoverage"]  = recomputed_cov
+        result["categoryScores"]    = derive_category_scores(recomputed_cov)
+        result["jdAnalysisSummary"] = jd_analysis["summary"]
+        result["jdWeakCategories"]  = jd_analysis["weakCategories"]
+        result["jdMustCover"]       = jd_analysis["mustCover"]
+
+        pdf_name = build_pdf_filename(company, role)
+
+        try:
+            save_and_compile(result["latexCode"], job_id)
+            result["download_url"] = f"/download/{job_id}/{pdf_name}"
+            result["pdf_filename"] = pdf_name
+            cleanup_aux_files(job_id)
+        except RuntimeError as exc:
+            log.warning("PDF compilation failed: %s", exc)
+            result["download_url"]    = None
+            result["pdf_filename"]    = None
+            result["compile_warning"] = str(exc)
+
+        if result.get("download_url"):
+            creds = get_drive_credentials()
+            if creds:
+                try:
+                    drive_link = upload_to_google_drive(
+                        OUTPUT_DIR / job_id / "document.pdf", pdf_name)
+                    result["drive_link"] = drive_link
+                except Exception as exc:
+                    log.warning("Drive upload failed: %s", exc)
+                    result["drive_warning"] = str(exc)
+            else:
+                result["drive_warning"] = "not_authorized"
+
+        JOB_STORE[job_id] = {"status": "done", "result": result, "error": None}
+        log.info("Job %s completed successfully.", job_id)
+
+    except Exception as exc:
+        log.exception("Job %s failed: %s", job_id, exc)
+        JOB_STORE[job_id] = {"status": "error", "result": None, "error": str(exc)}
+
 # ══════════════════════════════════════════════════════════════════════════════
 # HTTP Handler
 # ══════════════════════════════════════════════════════════════════════════════
@@ -360,7 +436,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(200); self.send_cors(); self.end_headers()
 
-    def do_GET(self):
+    def _do_GET_original(self):
         if self.path == "/auth":
             try:
                 auth_url = get_oauth_auth_url()
@@ -458,7 +534,15 @@ p{{color:#8A8892;line-height:1.6}}a{{color:#C8F060}}
         if self.path == "/tailor": self._handle_tailor(body)
         else: self.send_response(404); self.send_cors(); self.end_headers()
 
+    def do_GET(self, *args, **kwargs):
+        # Status polling endpoint
+        if self.path.startswith("/status/"):
+            job_id = self.path[len("/status/"):]
+            self._handle_status(job_id); return
+        self._do_GET_original()
+
     def _handle_tailor(self, body: bytes):
+        """Start async job and return job_id immediately to avoid proxy timeout."""
         try:
             if not API_KEY or API_KEY == "YOUR_ANTHROPIC_KEY_HERE":
                 self._json_error(500,"Missing ANTHROPIC_API_KEY."); return
@@ -471,69 +555,29 @@ p{{color:#8A8892;line-height:1.6}}a{{color:#C8F060}}
 
             if not jd: self._json_error(400,"Job description is required."); return
 
-            jd    = jd[:MAX_JD_CHARS]
-            latex = read_base_resume()
+            job_id = uuid.uuid4().hex
+            JOB_STORE[job_id] = {"status": "pending", "result": None, "error": None}
 
-            jd_analysis = validate_jd_analysis(
-                call_anthropic_json(JD_ANALYSIS_PROMPT,
-                    f"LATEX RESUME:\n{latex}\n\nJOB DESCRIPTION:\n{jd}\n")
-            )
+            # Start background thread so we return immediately
+            t = threading.Thread(target=_process_job,
+                                 args=(job_id, jd, mode, company, role),
+                                 daemon=True)
+            t.start()
 
-            result = validate_generation_result(
-                call_anthropic_json(GENERATION_PROMPT,
-                    f"Optimization mode: {mode}\nTarget Company: {company}\nTarget Role: {role}\n\n"
-                    f"LATEX RESUME:\n{latex}\n\nJOB DESCRIPTION:\n{jd}\n\n"
-                    f"JD ANALYSIS:\n{json.dumps(jd_analysis,ensure_ascii=False)}")
-            )
+            self._json_ok({"job_id": job_id})
 
-            missing, recomputed_cov = compute_missing_keywords(jd_analysis, result["latexCode"])
-            result["missingKeywords"]   = missing
-            result["categoryCoverage"]  = recomputed_cov
-            result["categoryScores"]    = derive_category_scores(recomputed_cov)
-            result["jdAnalysisSummary"] = jd_analysis["summary"]
-            result["jdWeakCategories"]  = jd_analysis["weakCategories"]
-            result["jdMustCover"]       = jd_analysis["mustCover"]
-
-            job_id   = uuid.uuid4().hex
-            pdf_name = build_pdf_filename(company, role)
-
-            try:
-                save_and_compile(result["latexCode"], job_id)
-                result["download_url"] = f"/download/{job_id}/{pdf_name}"
-                result["pdf_filename"] = pdf_name
-                cleanup_aux_files(job_id)
-            except RuntimeError as exc:
-                log.warning("PDF compilation failed: %s", exc)
-                result["download_url"]    = None
-                result["pdf_filename"]    = None
-                result["compile_warning"] = str(exc)
-
-            if result.get("download_url"):
-                creds = get_drive_credentials()
-                if creds:
-                    try:
-                        drive_link = upload_to_google_drive(
-                            OUTPUT_DIR / job_id / "document.pdf", pdf_name)
-                        result["drive_link"] = drive_link
-                    except Exception as exc:
-                        log.warning("Drive upload failed: %s", exc)
-                        result["drive_warning"] = str(exc)
-                else:
-                    result["drive_warning"] = "not_authorized"
-
-            self._json_ok(result)
-
-        except FileNotFoundError as e: self._json_error(400, str(e))
-        except ValueError as e:        self._json_error(400, str(e))
-        except urllib.error.HTTPError as e:
-            self._json_error(502, f"Anthropic API error {e.code}: {e.read().decode('utf-8',errors='replace')}")
-        except urllib.error.URLError as e:
-            self._json_error(502, f"Network error: {e.reason}")
         except json.JSONDecodeError as e:
-            self._json_error(500, f"Could not parse JSON: {e}")
+            self._json_error(400, f"Invalid JSON: {e}")
         except Exception as e:
-            log.exception("Unexpected error")
+            log.exception("Unexpected error starting job")
             self._json_error(500, f"Unexpected error: {e}")
+
+    def _handle_status(self, job_id: str):
+        """Poll endpoint — returns job status and result when done."""
+        job = JOB_STORE.get(job_id)
+        if not job:
+            self._json_error(404, "Job not found."); return
+        self._json_ok(job)
 
     def _json_ok(self, data):
         body = json.dumps(data).encode("utf-8")
@@ -551,7 +595,7 @@ p{{color:#8A8892;line-height:1.6}}a{{color:#C8F060}}
 
 
 if __name__ == "__main__":
-    port = 8080
+    port = int(os.environ.get("PORT", 8080))
     print("="*60)
     print("  LaTeX Resume Tailor — Final Server")
     print("="*60)
@@ -566,11 +610,10 @@ if __name__ == "__main__":
     if creds: print("  Drive auth: ✓ connected")
     else:
         print("  Drive auth: ✗ not connected")
-        print(f"  → Visit http://localhost:{port}/auth to connect Google Drive")
+        print(f"  → Visit {APP_BASE_URL}/auth to connect Google Drive")
     print()
-    print(f"  Running at http://localhost:{port}")
+    print(f"  Running at 0.0.0.0:{port}")
     print("  Press Ctrl+C to stop.")
-    port = int(os.environ.get("PORT", 8080))
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     try: server.serve_forever()
     except KeyboardInterrupt: print("\nServer stopped.")

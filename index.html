@@ -465,27 +465,40 @@ async function run() {
 
   let result;
   try {
-    const controller = new AbortController();
-    const timeout    = setTimeout(() => controller.abort(), 90000);
-
-    const res = await fetch('/tailor', {
+    // Step 1: Submit job, get job_id immediately
+    const submitRes = await fetch('/tailor', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ jd, mode, company, role }),   // ← NEW fields
-      signal:  controller.signal,
+      body:    JSON.stringify({ jd, mode, company, role }),
     });
-    clearTimeout(timeout);
+    const submitData = await submitRes.json();
+    if (!submitRes.ok) throw new Error(submitData.error || ('Server error ' + submitRes.status));
+    const jobId = submitData.job_id;
 
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || ('Server error ' + res.status));
-    result = data;
+    // Step 2: Poll /status/{job_id} until done or error
+    result = await new Promise((resolve, reject) => {
+      const maxWait = 180000; // 3 minutes max
+      const start   = Date.now();
+      const poll = async () => {
+        if (Date.now() - start > maxWait) {
+          reject(new Error('Request timed out after 3 minutes.')); return;
+        }
+        try {
+          const r    = await fetch('/status/' + jobId);
+          const data = await r.json();
+          if (data.status === 'done')   { resolve(data.result); return; }
+          if (data.status === 'error')  { reject(new Error(data.error || 'Job failed.')); return; }
+          setTimeout(poll, 2000); // still pending, poll again in 2s
+        } catch (e) { reject(e); }
+      };
+      poll();
+    });
+
   } catch (e) {
     await animP;
     btn.disabled  = false;
     btn.innerHTML = '&#9889; Generate Tailored Resume';
-    errEl.textContent = e.name === 'AbortError'
-      ? 'Request timed out. The model took too long to respond.'
-      : 'Error: ' + (e.message || 'Could not connect to server.');
+    errEl.textContent = 'Error: ' + (e.message || 'Could not connect to server.');
     errEl.className = 'err on';
     return;
   }
