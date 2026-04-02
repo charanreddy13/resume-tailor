@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>LaTeX Resume Tailor</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',sans-serif;background:#0B0C0F;color:#F0EEE8;min-height:100vh}
+.wrap{max-width:1100px;margin:0 auto;padding:32px 24px 80px}
+header{display:flex;align-items:center;justify-content:space-between;padding-bottom:28px;border-bottom:1px solid rgba(255,255,255,0.07);margin-bottom:32px}
+.logo{font-family:'Syne',sans-serif;font-size:20px;font-weight:800;letter-spacing:-0.5px}
+.logo span{color:#C8F060}
+.badge{font-size:11px;background:rgba(200,240,96,0.1);color:#C8F060;border:1px solid rgba(200,240,96,0.25);padding:4px 12px;border-radius:99px;letter-spacing:0.05em}
+#resumeBanner{border-radius:12px;padding:16px 20px;margin-bottom:24px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;border:1px solid}
+#resumeBanner.saved{background:rgba(29,158,117,0.08);border-color:rgba(29,158,117,0.25)}
+#resumeBanner.missing{background:rgba(226,75,74,0.08);border-color:rgba(226,75,74,0.25)}
+.banner-left{display:flex;align-items:center;gap:12px}
+.banner-icon{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.saved .banner-icon{background:rgba(29,158,117,0.15);color:#5DCAA5}
+.missing .banner-icon{background:rgba(226,75,74,0.15);color:#F09595}
+.banner-title{font-family:'Syne',sans-serif;font-size:14px;font-weight:700;margin-bottom:2px}
+.saved .banner-title{color:#5DCAA5}
+.missing .banner-title{color:#F09595}
+.banner-sub{font-size:12px;color:#8A8892}
+.btn-sm{font-size:12px;padding:7px 16px;border-radius:99px;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:500;border:1px solid;transition:opacity 0.15s}
+.btn-sm:hover{opacity:0.85}
+.btn-refresh{background:rgba(200,240,96,0.12);border-color:rgba(200,240,96,0.3);color:#C8F060}
+.card,.settings,.analysis-card,.score-card,.out-card,.pipeline,.ats-bar{background:#13141A;border:1px solid rgba(255,255,255,0.08);border-radius:14px}
+.card,.analysis-card,.score-card,.pipeline,.out-card,.ats-bar{margin-bottom:16px}
+.card{padding:20px}
+.analysis-card{padding:20px;display:none}
+.analysis-card.on{display:block}
+.settings{padding:16px 20px;margin-bottom:20px}
+.card-label,.analysis-title,.pl-title{font-size:11px;color:#8A8892;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:10px}
+.card-label{display:flex;align-items:center;gap:8px}
+.dot-p{width:7px;height:7px;border-radius:50%;background:#7B6EF6;display:inline-block}
+.dot-g{width:7px;height:7px;border-radius:50%;background:#C8F060;display:inline-block}
+textarea{width:100%;height:220px;background:#0B0C0F;border:1px solid rgba(255,255,255,0.08);border-radius:10px;color:#F0EEE8;font-family:'DM Mono',monospace;font-size:12px;line-height:1.65;padding:14px 16px;resize:vertical;outline:none;transition:border-color 0.18s}
+textarea:focus{border-color:rgba(200,240,96,0.35)}
+textarea::placeholder{color:#444}
+
+/* ── NEW: target inputs row ── */
+.target-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px}
+@media(max-width:600px){.target-row{grid-template-columns:1fr}}
+.target-field label{font-size:11px;color:#8A8892;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:7px;display:block}
+.target-field input{width:100%;background:#0B0C0F;border:1px solid rgba(255,255,255,0.08);border-radius:8px;color:#F0EEE8;font-family:'DM Sans',sans-serif;font-size:13px;padding:10px 14px;outline:none;transition:border-color 0.18s}
+.target-field input:focus{border-color:rgba(200,240,96,0.35)}
+.target-field input::placeholder{color:#444}
+
+.settings label{font-size:11px;color:#8A8892;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:8px;display:block}
+select{width:100%;background:#0B0C0F;border:1px solid rgba(255,255,255,0.08);border-radius:8px;color:#F0EEE8;font-family:'DM Sans',sans-serif;font-size:13px;padding:10px 14px;outline:none;appearance:none;cursor:pointer}
+select:focus{border-color:rgba(200,240,96,0.35)}
+#runBtn{width:100%;padding:18px;margin-bottom:20px;background:#C8F060;color:#0B0C0F;font-family:'Syne',sans-serif;font-weight:800;font-size:17px;letter-spacing:-0.3px;border:none;border-radius:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;transition:transform 0.15s,opacity 0.15s}
+#runBtn:hover{transform:translateY(-2px);opacity:0.92}
+#runBtn:active{transform:scale(0.99)}
+#runBtn:disabled{opacity:0.4;cursor:not-allowed;transform:none}
+.spinner{width:18px;height:18px;border:2.5px solid rgba(11,12,15,0.25);border-top-color:#0B0C0F;border-radius:50%;animation:spin 0.7s linear infinite;flex-shrink:0}
+@keyframes spin{to{transform:rotate(360deg)}}
+.err{background:rgba(226,75,74,0.08);border:1px solid rgba(226,75,74,0.2);border-radius:10px;padding:14px 18px;font-size:13px;color:#F09595;margin-bottom:16px;display:none}
+.err.on{display:block}
+.pipeline{padding:20px 22px;display:none}
+.pipeline.on{display:block}
+.step{display:flex;align-items:center;gap:12px;font-size:13px;color:#444;padding:5px 0;transition:color 0.2s}
+.step.active{color:#F0EEE8}
+.step.done{color:#5DCAA5}
+.step-dot{width:22px;height:22px;border-radius:50%;border:1.5px solid rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0;transition:all 0.2s}
+.step.active .step-dot{border-color:#C8F060;color:#C8F060}
+.step.done .step-dot{background:#1D9E75;border-color:#1D9E75;color:#fff}
+.ats-bar{padding:16px 20px;align-items:center;gap:14px;display:none}
+.ats-bar.on{display:flex}
+.ats-track{flex:1;height:6px;background:rgba(255,255,255,0.06);border-radius:99px;overflow:hidden}
+.ats-fill{height:100%;border-radius:99px;background:linear-gradient(90deg,#7B6EF6,#C8F060);width:0%;transition:width 1.2s cubic-bezier(0.4,0,0.2,1)}
+.ats-num{font-family:'Syne',sans-serif;font-weight:700;font-size:20px;color:#C8F060;min-width:62px;text-align:right}
+.score-card{padding:22px;display:none}
+.score-card.on{display:flex;align-items:center;gap:20px;flex-wrap:wrap}
+.score-big{font-family:'Syne',sans-serif;font-size:54px;font-weight:800;color:#C8F060;line-height:1;flex-shrink:0}
+.score-big small{font-size:20px;color:#555;font-weight:400}
+.score-info h3{font-family:'Syne',sans-serif;font-size:16px;font-weight:700;margin-bottom:6px}
+.score-info p{font-size:13px;color:#8A8892;line-height:1.6;margin-bottom:10px}
+.tags{display:flex;gap:6px;flex-wrap:wrap}
+.tag{font-size:11px;padding:3px 10px;border-radius:99px;background:rgba(29,158,117,0.1);color:#5DCAA5;border:1px solid rgba(29,158,117,0.25)}
+.grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media (max-width: 860px){.grid-2{grid-template-columns:1fr}}
+.mini-card{background:#0B0C0F;border:1px solid rgba(255,255,255,0.06);border-radius:12px;padding:14px 16px}
+.mini-card h4{font-family:'Syne',sans-serif;font-size:13px;margin-bottom:8px;color:#F0EEE8}
+.muted{font-size:12px;color:#8A8892;line-height:1.6}
+.pill-list{display:flex;gap:6px;flex-wrap:wrap}
+.pill{font-size:11px;padding:4px 10px;border-radius:999px;background:rgba(123,110,246,0.12);color:#B7AEFF;border:1px solid rgba(123,110,246,0.25)}
+.pill.warn{background:rgba(226,75,74,0.10);color:#F09595;border-color:rgba(226,75,74,0.22)}
+.pill.good{background:rgba(29,158,117,0.10);color:#5DCAA5;border-color:rgba(29,158,117,0.22)}
+.out-card{overflow:hidden;display:none}
+.out-card.on{display:block}
+.tabs{display:flex;border-bottom:1px solid rgba(255,255,255,0.07)}
+.tab{padding:12px 20px;font-size:13px;background:transparent;border:none;border-bottom:2px solid transparent;color:#8A8892;cursor:pointer;font-family:'DM Sans',sans-serif;margin-bottom:-1px;transition:color 0.15s,border-color 0.15s}
+.tab.on{color:#C8F060;border-bottom-color:#C8F060}
+.tab:hover:not(.on){color:#F0EEE8}
+pre{font-family:'DM Mono',monospace;font-size:12px;line-height:1.7;color:#A8C8A8;background:#080909;padding:20px 22px;white-space:pre-wrap;word-break:break-word;max-height:480px;overflow-y:auto;display:none}
+pre.on{display:block}
+.assess{padding:20px 22px;font-size:13.5px;line-height:1.7;display:none}
+.assess.on{display:block}
+.assess h4{font-family:'Syne',sans-serif;font-size:11px;color:#C8F060;text-transform:uppercase;letter-spacing:0.06em;margin:16px 0 7px}
+.assess h4:first-child{margin-top:0}
+.assess p{color:#8A8892;margin-bottom:8px}
+.assess ul{list-style:none;display:flex;flex-direction:column;gap:5px}
+.assess li{color:#8A8892;display:flex;align-items:flex-start;gap:8px}
+.assess li::before{content:'-> ';color:#C8F060;flex-shrink:0}
+.kw-list{font-family:'DM Mono',monospace;font-size:11px;line-height:2;color:#555}
+.copy-row{padding:12px 18px;border-top:1px solid rgba(255,255,255,0.07);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.copy-row span{font-size:12px;color:#555}
+.copy-btn{font-size:12px;padding:8px 18px;border-radius:99px;background:rgba(200,240,96,0.1);border:1px solid rgba(200,240,96,0.25);color:#C8F060;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:500;transition:background 0.15s}
+.copy-btn:hover{background:rgba(200,240,96,0.18)}
+
+/* ── NEW: download / drive link buttons ── */
+#downloadBar{display:none;margin-bottom:16px}
+#downloadBar.on{display:flex;flex-wrap:wrap;gap:10px}
+.dl-btn{display:inline-flex;align-items:center;gap:7px;padding:10px 20px;border-radius:99px;font-size:13px;font-weight:600;font-family:'DM Sans',sans-serif;text-decoration:none;border:1px solid;cursor:pointer;transition:opacity 0.15s}
+.dl-btn:hover{opacity:0.82}
+.dl-pdf{background:rgba(29,158,117,0.12);border-color:rgba(29,158,117,0.35);color:#5DCAA5}
+.dl-drive{background:rgba(123,110,246,0.12);border-color:rgba(123,110,246,0.35);color:#B7AEFF}
+.dl-warn{background:rgba(226,75,74,0.08);border-color:rgba(226,75,74,0.25);color:#F09595;font-size:12px;padding:8px 14px;border-radius:8px;flex-basis:100%}
+
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.1);border-radius:99px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">Resume<span>Tailor</span></div>
+    <span class="badge">CATEGORY-AWARE ATS</span>
+  </header>
+
+  <div id="resumeBanner" class="missing">
+    <div class="banner-left">
+      <div class="banner-icon" id="bannerIcon">!</div>
+      <div>
+        <div class="banner-title" id="bannerTitle">Checking base resume...</div>
+        <div class="banner-sub" id="bannerSub">Looking for charan_reddy.tex in the app folder</div>
+      </div>
+    </div>
+    <button class="btn-sm btn-refresh" onclick="checkResumeStatus()">Refresh</button>
+  </div>
+
+  <!-- ── NEW: Company + Role inputs ── -->
+  <div class="target-row">
+    <div class="target-field">
+      <label>Target Company</label>
+      <input type="text" id="companyIn" placeholder="e.g. Google, Amazon, Stripe…" maxlength="80"/>
+    </div>
+    <div class="target-field">
+      <label>Target Role / Job Title</label>
+      <input type="text" id="roleIn" placeholder="e.g. Senior Software Engineer…" maxlength="80"/>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label"><span class="dot-p"></span> Job Description</div>
+    <textarea id="jdIn" placeholder="Paste the full job description here..."></textarea>
+  </div>
+
+  <div class="settings">
+    <label>Optimization Mode</label>
+    <select id="modeSelect">
+      <option value="full">Full ATS Dominance</option>
+      <option value="conservative">Conservative</option>
+      <option value="keywords">Keywords Only</option>
+    </select>
+  </div>
+
+  <button id="runBtn" onclick="run()">&#9889; Generate Tailored Resume</button>
+
+  <div class="err" id="err"></div>
+
+  <div class="pipeline" id="pipeline">
+    <div class="pl-title">Processing Steps</div>
+    <div class="step" id="s1"><div class="step-dot" id="d1">1</div> Loading local base resume</div>
+    <div class="step" id="s2"><div class="step-dot" id="d2">2</div> Analyzing JD keywords by category</div>
+    <div class="step" id="s3"><div class="step-dot" id="d3">3</div> Identifying weak coverage areas</div>
+    <div class="step" id="s4"><div class="step-dot" id="d4">4</div> Rewriting summary and skills</div>
+    <div class="step" id="s5"><div class="step-dot" id="d5">5</div> Reworking experience bullets</div>
+    <div class="step" id="s6"><div class="step-dot" id="d6">6</div> Recomputing missing keywords from final LaTeX</div>
+    <div class="step" id="s7"><div class="step-dot" id="d7">7</div> Compiling PDF &amp; uploading to Drive</div>
+  </div>
+
+  <!-- ── NEW: Download / Drive bar ── -->
+  <div id="downloadBar">
+    <!-- populated by JS after successful generation -->
+  </div>
+
+  <div class="analysis-card" id="analysisCard">
+    <div class="analysis-title">JD Analysis Snapshot</div>
+    <div class="grid-2">
+      <div class="mini-card">
+        <h4>Analysis Summary</h4>
+        <p class="muted" id="analysisSummary">--</p>
+      </div>
+      <div class="mini-card">
+        <h4>Weak Categories Found</h4>
+        <div class="pill-list" id="weakCategoriesPills"></div>
+      </div>
+      <div class="mini-card">
+        <h4>Must-Cover JD Phrases</h4>
+        <div class="pill-list" id="mustCoverPills"></div>
+      </div>
+      <div class="mini-card">
+        <h4>Categories Addressed in Rewrite</h4>
+        <div class="pill-list" id="addressedPills"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="ats-bar" id="atsBar">
+    <span style="font-size:12px;color:#8A8892;white-space:nowrap">ATS Score</span>
+    <div class="ats-track"><div class="ats-fill" id="atsFill"></div></div>
+    <span class="ats-num" id="atsNum">--</span>
+  </div>
+
+  <div class="score-card" id="scoreCard">
+    <div class="score-big" id="scoreBig">--<small>/100</small></div>
+    <div class="score-info">
+      <h3 id="scoreTitle">ATS Score</h3>
+      <p id="scoreDesc"></p>
+      <div class="tags" id="scoreTags"></div>
+    </div>
+  </div>
+
+  <div class="out-card" id="outCard">
+    <div class="tabs">
+      <button class="tab on" onclick="switchTab('tex',this)">LaTeX Output</button>
+      <button class="tab" onclick="switchTab('assess',this)">Expert Assessment</button>
+    </div>
+    <pre id="outTex" class="on"></pre>
+    <div class="assess" id="outAssess"></div>
+    <div class="copy-row">
+      <span id="copyRowHint">Ready to compile in Overleaf or any LaTeX editor</span>
+      <button class="copy-btn" onclick="copyLatex()">Copy LaTeX</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let resumeSaved = false;
+
+async function checkResumeStatus() {
+  const banner = document.getElementById('resumeBanner');
+  const icon   = document.getElementById('bannerIcon');
+  const title  = document.getElementById('bannerTitle');
+  const sub    = document.getElementById('bannerSub');
+  try {
+    const res  = await fetch('/resume-status');
+    const data = await res.json();
+    resumeSaved = !!data.saved;
+    if (resumeSaved) {
+      banner.className = 'saved';
+      icon.textContent  = '✓';
+      title.textContent = 'Base resume detected';
+      sub.textContent   = data.path || 'charan_reddy.tex found';
+    } else {
+      banner.className = 'missing';
+      icon.textContent  = '!';
+      title.textContent = 'charan_reddy.tex not found';
+      sub.textContent   = 'Put charan_reddy.tex in the same folder as server.py';
+    }
+  } catch (e) {
+    resumeSaved = false;
+    banner.className = 'missing';
+    icon.textContent  = '!';
+    title.textContent = 'Could not reach server';
+    sub.textContent   = 'Make sure server.py is running on localhost:8080';
+  }
+}
+
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  document.getElementById('outTex').classList.toggle('on', name === 'tex');
+  document.getElementById('outAssess').classList.toggle('on', name === 'assess');
+}
+
+function copyLatex() {
+  navigator.clipboard.writeText(document.getElementById('outTex').textContent).then(() => {
+    const b = document.querySelector('.copy-btn');
+    b.textContent = 'Copied!';
+    setTimeout(() => b.textContent = 'Copy LaTeX', 2000);
+  });
+}
+
+function setStep(n, state) {
+  const s = document.getElementById('s' + n);
+  const d = document.getElementById('d' + n);
+  s.className = 'step ' + state;
+  d.textContent = state === 'done' ? '✓' : n;
+}
+
+async function animateSteps() {
+  const times = [500, 1000, 900, 1400, 1600, 1100, 1400];
+  for (let i = 0; i < 7; i++) {
+    setStep(i + 1, 'active');
+    await new Promise(r => setTimeout(r, times[i]));
+    setStep(i + 1, 'done');
+  }
+}
+
+function setPills(containerId, values, kind='') {
+  const el   = document.getElementById(containerId);
+  el.innerHTML = '';
+  const list = Array.isArray(values) ? values : [];
+  if (!list.length) {
+    const span = document.createElement('span');
+    span.className = 'pill';
+    span.textContent = '--';
+    el.appendChild(span);
+    return;
+  }
+  list.forEach(v => {
+    const span = document.createElement('span');
+    span.className = 'pill' + (kind ? ' ' + kind : '');
+    span.textContent = v;
+    el.appendChild(span);
+  });
+}
+
+/* ── NEW: render the download + drive buttons ── */
+function renderDownloadBar(result) {
+  const bar = document.getElementById('downloadBar');
+  bar.innerHTML = '';
+
+  if (result.download_url) {
+    const a = document.createElement('a');
+    a.className = 'dl-btn dl-pdf';
+    a.href      = result.download_url;
+    a.download  = result.pdf_filename || 'resume.pdf';
+    a.innerHTML = '⬇ Download PDF — ' + (result.pdf_filename || 'resume.pdf');
+    bar.appendChild(a);
+  }
+
+  if (result.drive_link) {
+    const a = document.createElement('a');
+    a.className = 'dl-btn dl-drive';
+    a.href      = result.drive_link;
+    a.target    = '_blank';
+    a.rel       = 'noopener noreferrer';
+    a.innerHTML = '📂 Open in Google Drive';
+    bar.appendChild(a);
+  }
+
+  if (result.compile_warning) {
+    const w = document.createElement('div');
+    w.className   = 'dl-warn';
+    w.textContent = '⚠ PDF compile issue: ' + result.compile_warning;
+    bar.appendChild(w);
+  }
+
+  if (result.drive_warning) {
+    const w = document.createElement('div');
+    w.className   = 'dl-warn';
+    w.textContent = '⚠ Drive upload issue: ' + result.drive_warning;
+    bar.appendChild(w);
+  }
+
+  if (bar.children.length) bar.className = 'on';
+}
+
+function renderAssessment(result) {
+  const coverage = result.categoryCoverage || {};
+  const scores   = result.categoryScores   || {};
+
+  function cov(name) {
+    const item = coverage[name] || { covered: 0, total: 0 };
+    return `${item.covered}/${item.total}`;
+  }
+  function score(name) {
+    return `${scores[name] || 0}%`;
+  }
+
+  document.getElementById('outAssess').innerHTML = `
+    <h4>Role Transformation</h4>
+    <p>${result.roleTransformation || '--'}</p>
+
+    <h4>Certification Updates</h4>
+    <p>${result.certificationChanges || '--'}</p>
+
+    <h4>Category Coverage</h4>
+    <ul>
+      <li>Technical: ${cov('technical')}</li>
+      <li>Behavioral: ${cov('behavioral')}</li>
+      <li>Managerial: ${cov('managerial')}</li>
+      <li>Domain: ${cov('domain')}</li>
+      <li>Certification: ${cov('certification')}</li>
+      <li>Other: ${cov('other')}</li>
+    </ul>
+
+    <h4>Category Scores</h4>
+    <ul>
+      <li>Technical: ${score('technical')}</li>
+      <li>Behavioral: ${score('behavioral')}</li>
+      <li>Managerial: ${score('managerial')}</li>
+      <li>Domain: ${score('domain')}</li>
+      <li>Certification: ${score('certification')}</li>
+      <li>Other: ${score('other')}</li>
+    </ul>
+
+    <h4>Weak Categories Addressed</h4>
+    <p>${(result.weakCategoriesAddressed || []).join(' · ') || '--'}</p>
+
+    <h4>Keywords Injected (${(result.keywordsInjected || []).length})</h4>
+    <p class="kw-list">${(result.keywordsInjected || []).join(' · ') || '--'}</p>
+
+    <h4>Still Missing (${(result.missingKeywords || []).length})</h4>
+    <p class="kw-list">${(result.missingKeywords || []).join(' · ') || '--'}</p>
+
+    <h4>Strategic Improvements</h4>
+    <ul>${(result.strengthsAdded || []).map(s => '<li>' + s + '</li>').join('')}</ul>
+  `;
+}
+
+async function run() {
+  const jd      = document.getElementById('jdIn').value.trim();
+  const company = document.getElementById('companyIn').value.trim();
+  const role    = document.getElementById('roleIn').value.trim();
+  const errEl   = document.getElementById('err');
+  errEl.className   = 'err';
+  errEl.textContent = '';
+
+  if (!resumeSaved) {
+    errEl.textContent = 'charan_reddy.tex was not found. Put it in the same folder as server.py and click Refresh.';
+    errEl.className   = 'err on';
+    return;
+  }
+  if (!jd) {
+    errEl.textContent = 'Please paste the job description.';
+    errEl.className   = 'err on';
+    return;
+  }
+  if (!company) {
+    errEl.textContent = 'Please enter the target company name.';
+    errEl.className   = 'err on';
+    return;
+  }
+  if (!role) {
+    errEl.textContent = 'Please enter the target role / job title.';
+    errEl.className   = 'err on';
+    return;
+  }
+
+  const btn = document.getElementById('runBtn');
+  btn.disabled  = true;
+  btn.innerHTML = '<div class="spinner"></div> Processing your resume...';
+
+  // Reset UI
+  document.getElementById('pipeline').className    = 'pipeline on';
+  document.getElementById('analysisCard').className = 'analysis-card';
+  document.getElementById('atsBar').className       = 'ats-bar';
+  document.getElementById('scoreCard').className    = 'score-card';
+  document.getElementById('outCard').className      = 'out-card';
+  document.getElementById('downloadBar').className  = '';
+  document.getElementById('downloadBar').innerHTML  = '';
+  document.getElementById('atsFill').style.width    = '0%';
+  for (let i = 1; i <= 7; i++) setStep(i, '');
+
+  const mode  = document.getElementById('modeSelect').value;
+  const animP = animateSteps();
+
+  let result;
+  try {
+    const controller = new AbortController();
+    const timeout    = setTimeout(() => controller.abort(), 90000);
+
+    const res = await fetch('/tailor', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ jd, mode, company, role }),   // ← NEW fields
+      signal:  controller.signal,
+    });
+    clearTimeout(timeout);
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || ('Server error ' + res.status));
+    result = data;
+  } catch (e) {
+    await animP;
+    btn.disabled  = false;
+    btn.innerHTML = '&#9889; Generate Tailored Resume';
+    errEl.textContent = e.name === 'AbortError'
+      ? 'Request timed out. The model took too long to respond.'
+      : 'Error: ' + (e.message || 'Could not connect to server.');
+    errEl.className = 'err on';
+    return;
+  }
+
+  await animP;
+  btn.disabled  = false;
+  btn.innerHTML = '&#9889; Generate Tailored Resume';
+
+  // ── NEW: show download + drive buttons ──────────────────────────────────────
+  renderDownloadBar(result);
+
+  // Analysis snapshot
+  document.getElementById('analysisCard').className  = 'analysis-card on';
+  document.getElementById('analysisSummary').textContent = result.jdAnalysisSummary || '--';
+  setPills('weakCategoriesPills', result.jdWeakCategories || [], 'warn');
+  setPills('mustCoverPills',      result.jdMustCover       || []);
+  setPills('addressedPills',      result.weakCategoriesAddressed || [], 'good');
+
+  // ATS bar
+  const atsScore = result.atsScore || 98;
+  document.getElementById('atsBar').className  = 'ats-bar on';
+  document.getElementById('atsNum').textContent = atsScore + '/100';
+  setTimeout(() => { document.getElementById('atsFill').style.width = atsScore + '%'; }, 80);
+
+  // Score card
+  document.getElementById('scoreCard').className    = 'score-card on';
+  document.getElementById('scoreBig').innerHTML     = atsScore + '<small>/100</small>';
+  document.getElementById('scoreTitle').textContent = '✓ ' + (result.synthesizedTitle || '');
+  document.getElementById('scoreDesc').textContent  = result.assessmentSummary || '';
+
+  const tagsEl = document.getElementById('scoreTags');
+  tagsEl.innerHTML = '';
+  (result.keywordsInjected || []).slice(0, 8).forEach(k => {
+    const t = document.createElement('span');
+    t.className   = 'tag';
+    t.textContent = k;
+    tagsEl.appendChild(t);
+  });
+
+  // Output card
+  document.getElementById('outTex').textContent = result.latexCode || '';
+  renderAssessment(result);
+  document.getElementById('outCard').className = 'out-card on';
+
+  // Update copy row hint with filename
+  if (result.pdf_filename) {
+    document.getElementById('copyRowHint').textContent =
+      'Saved as: ' + result.pdf_filename;
+  }
+
+  document.getElementById('analysisCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+checkResumeStatus();
+</script>
+</body>
+</html>
