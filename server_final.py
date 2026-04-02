@@ -32,16 +32,6 @@ LOG_DIR     = BASE_DIR / "logs"
 OUTPUT_DIR.mkdir(exist_ok=True)
 LOG_DIR.mkdir(exist_ok=True)
 
-# ── Decode OAuth client from env var if present (for Render deployment) ────────
-import base64
-_oauth_b64 = os.environ.get("OAUTH_CLIENT_B64", "")
-if _oauth_b64 and not OAUTH_FILE.exists():
-    try:
-        OAUTH_FILE.parent.mkdir(parents=True, exist_ok=True)
-        OAUTH_FILE.write_bytes(base64.b64decode(_oauth_b64))
-    except Exception as _e:
-        print(f"Warning: Could not decode OAUTH_CLIENT_B64: {_e}")
-
 MAX_RESUME_CHARS    = 50000
 MAX_JD_CHARS        = 50000
 REQUEST_TIMEOUT     = 75
@@ -53,6 +43,17 @@ OAUTH_FILE      = BASE_DIR / "credentials" / "oauth_client.json"
 TOKEN_FILE      = BASE_DIR / "credentials" / "token.pickle"
 SCOPES          = ["https://www.googleapis.com/auth/drive.file"]
 APP_BASE_URL    = os.environ.get("APP_BASE_URL", "http://localhost:8080")
+
+# ── Decode OAuth client from env var if present (for Render deployment) ────────
+import base64
+_oauth_b64 = os.environ.get("OAUTH_CLIENT_B64", "")
+if _oauth_b64 and not OAUTH_FILE.exists():
+    try:
+        OAUTH_FILE.parent.mkdir(parents=True, exist_ok=True)
+        OAUTH_FILE.write_bytes(base64.b64decode(_oauth_b64))
+        print("OAuth client decoded from OAUTH_CLIENT_B64 env var.")
+    except Exception as _e:
+        print(f"Warning: Could not decode OAUTH_CLIENT_B64: {_e}")
 
 logging.basicConfig(
     level=logging.INFO,
