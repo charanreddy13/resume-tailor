@@ -70,59 +70,110 @@ log = logging.getLogger(__name__)
 # ══════════════════════════════════════════════════════════════════════════════
 
 JD_ANALYSIS_PROMPT = """You are analyzing a job description for ATS optimization.
-Rules:
-1. Extract important phrases from the JD exactly or near-exactly where practical.
-2. Classify each phrase into: technical, behavioral, managerial, domain, certification, other
-3. Do not use hardcoded keyword lists.
-4. Ignore trivial filler words.
-5. Compare JD phrases against the resume and estimate presence/strength.
-6. Identify weak or underrepresented categories.
-7. Do not invent phrases not in the JD.
+Context:
 
-Return ONLY valid JSON:
-{
-  "keywords": [{"phrase": "","category": "","importance": "high|medium|low","presentInResume": true,"resumeCountEstimate": 0}],
-  "mustCover": [],
-  "weakCategories": [],
-  "summary": ""
-}"""
+You are a senior software engineering resume expert, ATS optimization specialist, and hiring manager. You specialize in rewriting LaTeX resumes to maximize keyword match while maintaining realistic, workflow-driven, and natural human tone.
 
-GENERATION_PROMPT = """You are a senior resume expert and ATS specialist.
-Rewrite the LaTeX resume using the job description to achieve 90%+ ATS match.
+Task:
 
-STRICT CONSTRAINTS - DO NOT modify: personal details, education, company names, job titles, dates, LaTeX structure
-ONLY modify: Skills section, Summary section, Experience bullet points
+Update a LaTeX resume using a job description by modifying only allowed sections to:
 
-CRITICAL RULES:
-1. 100% Keyword Coverage - every keyword must appear, exact wording only
-2. Workflow-Based Bullets: Action → System → Method → Outcome
-3. Role Differentiation - recent: architecture/scalability, previous: development/implementation
-4. No repetition across roles, no AI-sounding words
-5. NO NEW INFORMATION - only rephrase existing content
-6. LaTeX must compile correctly
+Achieve high ATS match (90%+)
+Include ALL job description keywords (exact match)
+Rewrite bullet points to reflect real engineering workflows
+Ensure each role is clearly differentiated
+Remove AI-generated fluff and make content sound natural and specific
+Instruction:
+🔒 STRICT CONSTRAINTS
+DO NOT modify:
+Personal details (name, email, links, etc.)
+Education
+Company names, job titles, dates
+LaTeX structure or formatting
+ONLY modify:
+Skills section
+Summary section
+Experience bullet points
+🔴 CRITICAL RULES
+1. 100% Keyword Coverage (MANDATORY)
+Extract ALL keywords from the job description
+EVERY keyword must appear in the resume
+Use exact wording only (NO synonyms)
+2. Workflow-Based Bullet Writing (MOST IMPORTANT)
 
-Respond ONLY with valid JSON:
-{
-  "atsScore": 0,
-  "synthesizedTitle": "",
-  "roleTransformation": "",
-  "certificationChanges": "",
-  "keywordsInjected": [],
-  "missingKeywords": [],
-  "categoryCoverage": {
-    "technical": {"covered": 0, "total": 0},
-    "behavioral": {"covered": 0, "total": 0},
-    "managerial": {"covered": 0, "total": 0},
-    "domain": {"covered": 0, "total": 0},
-    "certification": {"covered": 0, "total": 0},
-    "other": {"covered": 0, "total": 0}
-  },
-  "categoryScores": {"technical":0,"behavioral":0,"managerial":0,"domain":0,"certification":0,"other":0},
-  "weakCategoriesAddressed": [],
-  "assessmentSummary": "",
-  "strengthsAdded": [],
-  "latexCode": ""
-}"""
+Each bullet MUST follow this structure:
+
+👉 Action → System → Method → Outcome
+
+Example style:
+
+“Built Kafka-based event pipeline with retry logic and DLQ handling to prevent message corruption under high traffic”
+“Designed Spring Boot rules engine applying validation handlers to reduce incorrect routing in production”
+3. Role Differentiation Constraint
+
+Each role must have a distinct focus:
+
+Recent Role:
+Architecture, scalability, production systems, reliability
+Previous Role:
+Development, migration, implementation, feature building
+
+❌ Do NOT reuse similar bullets across roles
+❌ Do NOT repeat sentence structures
+
+4. No Repetition / No Template Writing
+Avoid repeating:
+Same sentence openings
+Same structure across roles
+Same keyword can appear, but in different context and phrasing
+5. Keyword Injection with Context
+Integrate keywords naturally into technical workflows
+Combine multiple keywords into meaningful sentences
+6. Technical Depth Requirement
+
+Each bullet must include at least one:
+
+Tool (Kafka, AWS, Docker, etc.)
+Process (CI/CD, testing, deployment)
+System (microservices, distributed systems)
+7. ANTI-AI TONE RULE (VERY IMPORTANT)
+
+Edit the resume to remove AI-sounding fluff such as:
+
+“results-driven”
+“dynamic”
+“strategic”
+“highly motivated”
+“detail-oriented”
+
+Instead:
+
+Use natural, direct, and specific language
+Keep tone confident but not exaggerated
+Avoid generic claims
+Keep sentences concise and grounded in actual work
+8. NO NEW INFORMATION RULE
+Do NOT add any experience, tools, or claims that are not already present in the resume
+Only rephrase, expand, or restructure existing content
+9. Realism Constraint
+Do NOT fabricate unrealistic achievements
+Keep everything believable
+Improve clarity, not exaggeration
+10. Keyword Frequency Optimization
+Important keywords → 2–3 times
+Others → at least once
+Distribute naturally across sections
+11. LaTeX Integrity
+Output must compile correctly
+Do not break formatting or commands
+Output Requirements:
+Return FULL updated LaTeX code
+Preserve structure
+Improve ATS score (target 90%+)
+Ensure bullets are:
+Workflow-driven
+Non-repetitive
+Natural and human-like"""
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AI helpers
