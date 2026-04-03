@@ -99,7 +99,14 @@ Experience bullet points
 100% Keyword Coverage (MANDATORY)
 Extract ALL keywords from the job description
 EVERY keyword must appear in the resume
-Use exact wording only (NO synonyms)"""
+Use exact wording only (NO synonyms)
+Return ONLY valid JSON:
+{
+  "keywords": [{"phrase": "","category": "","importance": "high|medium|low","presentInResume": true,"resumeCountEstimate": 0}],
+  "mustCover": [],
+  "weakCategories": [],
+  "summary": ""
+}"""
 
 GENERATION_PROMPT = """Instruction:
 
@@ -181,7 +188,29 @@ Improve ATS score (target 90%+)
 Ensure bullets are:
 Workflow-driven
 Non-repetitive
-Natural and human-like"""
+Natural and human-like
+Respond ONLY with valid JSON:
+{
+  "atsScore": 0,
+  "synthesizedTitle": "",
+  "roleTransformation": "",
+  "certificationChanges": "",
+  "keywordsInjected": [],
+  "missingKeywords": [],
+  "categoryCoverage": {
+    "technical": {"covered": 0, "total": 0},
+    "behavioral": {"covered": 0, "total": 0},
+    "managerial": {"covered": 0, "total": 0},
+    "domain": {"covered": 0, "total": 0},
+    "certification": {"covered": 0, "total": 0},
+    "other": {"covered": 0, "total": 0}
+  },
+  "categoryScores": {"technical":0,"behavioral":0,"managerial":0,"domain":0,"certification":0,"other":0},
+  "weakCategoriesAddressed": [],
+  "assessmentSummary": "",
+  "strengthsAdded": [],
+  "latexCode": ""
+}"""
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AI helpers
