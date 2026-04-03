@@ -69,37 +69,16 @@ log = logging.getLogger(__name__)
 # Prompts
 # ══════════════════════════════════════════════════════════════════════════════
 
-JD_ANALYSIS_PROMPT = """Context:
+JD_ANALYSIS_PROMPT = """You are analyzing a job description for ATS optimization.
+Rules:
+1. Extract important phrases from the JD exactly or near-exactly where practical.
+2. Classify each phrase into: technical, behavioral, managerial, domain, certification, other
+3. Do not use hardcoded keyword lists.
+4. Ignore trivial filler words.
+5. Compare JD phrases against the resume and estimate presence/strength.
+6. Identify weak or underrepresented categories.
+7. Do not invent phrases not in the JD.
 
-You are a senior software engineering resume expert, ATS optimization specialist, and hiring manager. You specialize in rewriting LaTeX resumes to maximize keyword match while maintaining realistic, workflow-driven, and natural human tone.
-
-Task:
-
-Update a LaTeX resume using a job description by modifying only allowed sections to:
-
-Achieve high ATS match (90%+)
-Include ALL job description keywords (exact match)
-Rewrite bullet points to reflect real engineering workflows
-Ensure each role is clearly differentiated
-Remove AI-generated fluff and make content sound natural and specific
-
-Instruction:
-🔒 STRICT CONSTRAINTS
-DO NOT modify:
-Personal details (name, email, links, etc.)
-Education
-Company names, job titles, dates
-LaTeX structure or formatting
-ONLY modify:
-Skills section
-Summary section
-Experience bullet points
-🔴 CRITICAL RULES
-
-100% Keyword Coverage (MANDATORY)
-Extract ALL keywords from the job description
-EVERY keyword must appear in the resume
-Use exact wording only (NO synonyms)
 Return ONLY valid JSON:
 {
   "keywords": [{"phrase": "","category": "","importance": "high|medium|low","presentInResume": true,"resumeCountEstimate": 0}],
@@ -107,6 +86,7 @@ Return ONLY valid JSON:
   "weakCategories": [],
   "summary": ""
 }"""
+
 
 GENERATION_PROMPT = """Instruction:
 
