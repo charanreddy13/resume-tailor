@@ -308,7 +308,7 @@ def sanitize_name(s: str, maxlen: int = 40) -> str:
     return s[:maxlen] or "Unknown"
 
 def build_pdf_filename(company: str, role: str) -> str:
-    return f"CharanReddy_{sanitize_name(company)}_{sanitize_name(role)}.pdf"
+    return f"CharanReddy_software_developer_{sanitize_name(company)}_{sanitize_name(role)}.pdf"
 
 def find_pdflatex() -> str:
     exe = shutil.which("pdflatex")
@@ -456,8 +456,8 @@ def _process_job(job_id: str, jd: str, mode: str, company: str, role: str):
         result["jdWeakCategories"]  = jd_analysis["weakCategories"]
         result["jdMustCover"]       = jd_analysis["mustCover"]
 
-        pdf_name = build_pdf_filename(company, role)
-
+        pdf_name = "CharanReddy_Chintalapuri_software_developer.pdf"
+        drive_pdf=build_pdf_filename(company, role)
         try:
             save_and_compile(result["latexCode"], job_id)
             result["download_url"] = f"/download/{job_id}/{pdf_name}"
@@ -474,7 +474,7 @@ def _process_job(job_id: str, jd: str, mode: str, company: str, role: str):
             if creds:
                 try:
                     drive_link = upload_to_google_drive(
-                        OUTPUT_DIR / job_id / "document.pdf", pdf_name)
+                        OUTPUT_DIR / job_id / "document.pdf", drive_pdf)
                     result["drive_link"] = drive_link
                 except Exception as exc:
                     log.warning("Drive upload failed: %s", exc)
