@@ -147,8 +147,7 @@ Avoid generic claims
 Keep sentences concise and grounded in actual work
 
 NO NEW INFORMATION RULE
-Do NOT add any experience, tools, or claims that are not already present in the resume
-Only rephrase, expand, or restructure existing content
+
 Realism Constraint
 Do NOT fabricate unrealistic achievements
 Keep everything believable
