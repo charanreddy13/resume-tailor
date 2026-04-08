@@ -147,7 +147,7 @@ Avoid generic claims
 Keep sentences concise and grounded in actual work
 
 NO NEW INFORMATION RULE
-
+do not change my role make sure you keep the same role titles and companies
 Realism Constraint
 Do NOT fabricate unrealistic achievements
 Keep everything believable
