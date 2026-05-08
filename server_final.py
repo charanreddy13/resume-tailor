@@ -529,12 +529,27 @@ def _process_job(job_id: str, jd: str, mode: str, company: str, role: str):
             else:
                 result["drive_warning"] = "not_authorized"
  
-        JOB_STORE[job_id] = {"status": "done", "result": result, "error": None}
+        # Preserve created_at so the cleanup loop respects the 1-hour TTL
+        existing = JOB_STORE.get(job_id, {})
+        JOB_STORE[job_id] = {
+            "status": "done",
+            "result": result,
+            "error": None,
+            "step": 7,
+            "created_at": existing.get("created_at", time.time()),
+        }
         log.info("Job %s completed successfully.", job_id)
  
     except Exception as exc:
         log.exception("Job %s failed: %s", job_id, exc)
-        JOB_STORE[job_id] = {"status": "error", "result": None, "error": str(exc)}
+        existing = JOB_STORE.get(job_id, {})
+        JOB_STORE[job_id] = {
+            "status": "error",
+            "result": None,
+            "error": str(exc),
+            "step": existing.get("step", 0),
+            "created_at": existing.get("created_at", time.time()),
+        }
  
 # ══════════════════════════════════════════════════════════════════════════════
 # HTTP Handler
@@ -612,11 +627,18 @@ class Handler(BaseHTTPRequestHandler):
     def _serve_pdf(self, path: str):
         m = re.fullmatch(r"/download/([0-9a-f]{32})/([^/]+\.pdf)", path)
         if not m:
-            self.send_response(400); self.send_cors(); self.end_headers(); return
+            self.send_response(400); self.send_cors(); self.end_headers()
+            self.wfile.write(b"Invalid download URL."); return
         job_id, filename = m.group(1), m.group(2)
         pdf_path = OUTPUT_DIR / job_id / "document.pdf"
         if not pdf_path.exists():
-            self.send_response(404); self.send_cors(); self.end_headers(); return
+            self.send_response(404)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_cors(); self.end_headers()
+            self.wfile.write(
+                b"PDF not found. It may have expired (files are kept for 1 hour). "
+                b"Please regenerate your resume."
+            ); return
         data = pdf_path.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type","application/pdf")
