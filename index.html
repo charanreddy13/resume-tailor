@@ -294,15 +294,6 @@ function setStep(n, state) {
   d.textContent = state === 'done' ? '✓' : n;
 }
 
-async function animateSteps() {
-  const times = [500, 1000, 900, 1400, 1600, 1100, 1400];
-  for (let i = 0; i < 7; i++) {
-    setStep(i + 1, 'active');
-    await new Promise(r => setTimeout(r, times[i]));
-    setStep(i + 1, 'done');
-  }
-}
-
 function setPills(containerId, values, kind='') {
   const el   = document.getElementById(containerId);
   el.innerHTML = '';
@@ -416,6 +407,10 @@ function renderAssessment(result) {
   `;
 }
 
+// Step labels map: server step number → last UI step to mark done
+// Server signals: 1=loaded resume, 2=JD analysis sent, 4=generation sent, 6=keywords, 7=compile
+const STEP_MAP = { 0:0, 1:1, 2:2, 3:3, 4:5, 5:5, 6:6, 7:7 };
+
 async function run() {
   const jd      = document.getElementById('jdIn').value.trim();
   const company = document.getElementById('companyIn').value.trim();
@@ -460,10 +455,11 @@ async function run() {
   document.getElementById('atsFill').style.width    = '0%';
   for (let i = 1; i <= 7; i++) setStep(i, '');
 
-  const mode  = document.getElementById('modeSelect').value;
-  const animP = animateSteps();
+  const mode = document.getElementById('modeSelect').value;
 
   let result;
+  let lastRenderedStep = 0;
+
   try {
     // Step 1: Submit job, get job_id immediately
     const submitRes = await fetch('/tailor', {
@@ -475,7 +471,7 @@ async function run() {
     if (!submitRes.ok) throw new Error(submitData.error || ('Server error ' + submitRes.status));
     const jobId = submitData.job_id;
 
-    // Step 2: Poll /status/{job_id} until done or error
+    // Step 2: Poll /status/{job_id} until done or error, advancing steps in real time
     result = await new Promise((resolve, reject) => {
       const maxWait = 180000; // 3 minutes max
       const start   = Date.now();
@@ -486,16 +482,30 @@ async function run() {
         try {
           const r    = await fetch('/status/' + jobId);
           const data = await r.json();
-          if (data.status === 'done')   { resolve(data.result); return; }
-          if (data.status === 'error')  { reject(new Error(data.error || 'Job failed.')); return; }
-          setTimeout(poll, 2000); // still pending, poll again in 2s
+
+          // Advance UI steps to match server-reported step
+          const serverStep = data.step || 0;
+          const uiTarget   = STEP_MAP[Math.min(serverStep, 7)] || 0;
+          while (lastRenderedStep < uiTarget) {
+            setStep(lastRenderedStep + 1, 'done');
+            lastRenderedStep++;
+          }
+          if (uiTarget > 0 && lastRenderedStep < 7) setStep(lastRenderedStep + 1, 'active');
+
+          if (data.status === 'done')  { resolve(data.result); return; }
+          if (data.status === 'error') { reject(new Error(data.error || 'Job failed.')); return; }
+          setTimeout(poll, 2000);
         } catch (e) { reject(e); }
       };
       poll();
     });
 
   } catch (e) {
-    await animP;
+    // Mark any in-progress step as failed visual state
+    for (let i = 1; i <= 7; i++) {
+      const s = document.getElementById('s' + i);
+      if (s && s.classList.contains('active')) { s.className = 'step'; break; }
+    }
     btn.disabled  = false;
     btn.innerHTML = '&#9889; Generate Tailored Resume';
     errEl.textContent = 'Error: ' + (e.message || 'Could not connect to server.');
@@ -503,7 +513,9 @@ async function run() {
     return;
   }
 
-  await animP;
+  // Mark remaining steps done
+  for (let i = lastRenderedStep + 1; i <= 7; i++) setStep(i, 'done');
+
   btn.disabled  = false;
   btn.innerHTML = '&#9889; Generate Tailored Resume';
 

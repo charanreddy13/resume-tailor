@@ -9,6 +9,7 @@ import re
 import uuid
 import shutil
 import logging
+import time
 import subprocess
 import urllib.request
 import urllib.error
@@ -68,8 +69,9 @@ log = logging.getLogger(__name__)
 # ══════════════════════════════════════════════════════════════════════════════
 # Prompts
 # ══════════════════════════════════════════════════════════════════════════════
-
-JD_ANALYSIS_PROMPT = """You are analyzing a job description for ATS optimization.
+COMBINED_PROMPT = """You are an expert ATS resume optimizer. Work in two internal steps:
+ 
+STEP 1 — Analyze the job description:
 Rules:
 1. Extract important phrases from the JD exactly or near-exactly where practical.
 2. Classify each phrase into: technical, behavioral, managerial, domain, certification, other
@@ -79,16 +81,10 @@ Rules:
 6. Identify weak or underrepresented categories.
 7. Do not invent phrases not in the JD.
 
-Return ONLY valid JSON:
-{
-  "keywords": [{"phrase": "","category": "","importance": "high|medium|low","presentInResume": true,"resumeCountEstimate": 0}],
-  "mustCover": [],
-  "weakCategories": [],
-  "summary": ""
-}"""
 
+STEP 2 — Rewrite the LaTeX resume using that analysis:
 
-GENERATION_PROMPT = """Instruction:
+Instruction:
 
 Workflow-Based Bullet Writing (MOST IMPORTANT)
 
@@ -168,8 +164,15 @@ Ensure bullets are:
 Workflow-driven
 Non-repetitive
 Natural and human-like
+
 Respond ONLY with valid JSON:
 {
+  "jdAnalysis": {
+    "keywords": [{"phrase": "","category": "","importance": "high|medium|low","presentInResume": true,"resumeCountEstimate": 0}],
+    "mustCover": [],
+    "weakCategories": [],
+    "summary": ""
+  },
   "atsScore": 0,
   "synthesizedTitle": "",
   "roleTransformation": "",
@@ -202,18 +205,28 @@ def read_base_resume() -> str:
     if not text:
         raise ValueError("Resume file is empty.")
     return text[:MAX_RESUME_CHARS]
-
+ 
 def parse_json_text(raw: str) -> dict:
     clean = raw.strip()
-    if clean.startswith("```"):
-        clean = clean.split("\n", 1)[1] if "\n" in clean else clean
-    if clean.endswith("```"):
-        clean = clean.rsplit("```", 1)[0]
-    return json.loads(clean.strip())
-
-def call_anthropic_json(system_prompt: str, user_msg: str) -> dict:
+    # Strip any markdown code fence (```json ... ``` or ``` ... ```)
+    clean = re.sub(r'^```(?:json)?\s*\n?', '', clean)
+    clean = re.sub(r'\n?```\s*$', '', clean)
+    clean = clean.strip()
+    try:
+        return json.loads(clean)
+    except json.JSONDecodeError:
+        # Last resort: find the outermost {...} block in case there is surrounding text
+        m = re.search(r'\{.*\}', clean, re.DOTALL)
+        if m:
+            return json.loads(m.group(0))
+        raise
+ 
+def call_anthropic_json(system_prompt: str, user_msg: str,
+                        model: str = MODEL_NAME,
+                        max_tokens: int = 5000,
+                        retries: int = 2) -> dict:
     payload = json.dumps({
-        "model": MODEL_NAME, "max_tokens": 8000,
+        "model": model, "max_tokens": max_tokens,
         "system": system_prompt,
         "messages": [{"role": "user", "content": user_msg}],
     }).encode("utf-8")
@@ -222,11 +235,33 @@ def call_anthropic_json(system_prompt: str, user_msg: str) -> dict:
         headers={"Content-Type": "application/json", "x-api-key": API_KEY,
                  "anthropic-version": "2023-06-01"}, method="POST",
     )
-    with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
-        api_data = json.loads(resp.read().decode("utf-8"))
-    raw_text = "".join(b.get("text","") for b in api_data.get("content",[]) if isinstance(b,dict))
-    return parse_json_text(raw_text)
-
+    for attempt in range(retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
+                api_data = json.loads(resp.read().decode("utf-8"))
+            raw_text = "".join(b.get("text","") for b in api_data.get("content",[]) if isinstance(b,dict))
+            return parse_json_text(raw_text)
+        except urllib.error.HTTPError as exc:
+            try:
+                err_body = exc.read().decode("utf-8")
+            except Exception:
+                err_body = "<unreadable>"
+            log.error("Anthropic API HTTP %d (attempt %d/%d): %s",
+                      exc.code, attempt + 1, retries + 1, err_body)
+            if exc.code in (429, 529) and attempt < retries:
+                wait = 2 ** attempt * 3
+                log.warning("Retrying in %ds...", wait)
+                time.sleep(wait)
+                continue
+            raise RuntimeError(f"Anthropic API error {exc.code}: {err_body}") from exc
+        except Exception as exc:
+            log.error("Anthropic request failed (attempt %d/%d): %s",
+                      attempt + 1, retries + 1, exc)
+            if attempt < retries:
+                time.sleep(2 ** attempt)
+                continue
+            raise
+ 
 def validate_jd_analysis(data: dict) -> dict:
     for key in ["keywords","mustCover","weakCategories","summary"]:
         if key not in data: raise ValueError(f"JD analysis missing: {key}")
@@ -245,12 +280,12 @@ def validate_jd_analysis(data: dict) -> dict:
                         "presentInResume":bool(item.get("presentInResume",False)),"resumeCountEstimate":count})
     data["keywords"] = cleaned
     return data
-
+ 
 def normalize_category_scores(value):
     cats = ["technical","behavioral","managerial","domain","certification","other"]
     if not isinstance(value, dict): value = {}
     return {c: max(0,min(100,int(value.get(c,0) or 0))) for c in cats}
-
+ 
 def validate_generation_result(result: dict) -> dict:
     for key in ["atsScore","synthesizedTitle","roleTransformation","certificationChanges",
                 "keywordsInjected","missingKeywords","categoryCoverage","categoryScores",
@@ -273,7 +308,7 @@ def validate_generation_result(result: dict) -> dict:
     result["categoryCoverage"] = normalized
     result["categoryScores"] = normalize_category_scores(result.get("categoryScores",{}))
     return result
-
+ 
 def compute_missing_keywords(jd_analysis: dict, latex_code: str):
     text = (latex_code or "").lower()
     cats = ["technical","behavioral","managerial","domain","certification","other"]
@@ -288,7 +323,7 @@ def compute_missing_keywords(jd_analysis: dict, latex_code: str):
         if phrase.lower() in text: coverage[category]["covered"] += 1
         else: missing.append(phrase)
     return missing, coverage
-
+ 
 def derive_category_scores(coverage: dict):
     scores = {}
     for cat, item in coverage.items():
@@ -296,19 +331,19 @@ def derive_category_scores(coverage: dict):
         covered = int(item.get("covered",0) or 0)
         scores[cat] = int(round((covered/total)*100)) if total > 0 else 0
     return normalize_category_scores(scores)
-
+ 
 # ══════════════════════════════════════════════════════════════════════════════
 # PDF compilation
 # ══════════════════════════════════════════════════════════════════════════════
-
+ 
 def sanitize_name(s: str, maxlen: int = 40) -> str:
     s = re.sub(r"[^\w\s-]","",s.strip())
     s = re.sub(r"[\s]+","_",s)
     return s[:maxlen] or "Unknown"
-
+ 
 def build_pdf_filename(company: str, role: str) -> str:
     return f"CharanReddy_software_developer_{sanitize_name(company)}_{sanitize_name(role)}.pdf"
-
+ 
 def find_pdflatex() -> str:
     exe = shutil.which("pdflatex")
     if exe: return exe
@@ -316,7 +351,7 @@ def find_pdflatex() -> str:
                r"C:\texlive\2024\bin\windows\pdflatex.exe"]:
         if Path(c).exists(): return c
     raise RuntimeError("pdflatex not found. Install MiKTeX from https://miktex.org")
-
+ 
 def save_and_compile(latex_code: str, job_id: str) -> Path:
     work_dir = OUTPUT_DIR / job_id
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -338,7 +373,7 @@ def save_and_compile(latex_code: str, job_id: str) -> Path:
     pdf_path = work_dir / "document.pdf"
     if not pdf_path.exists(): raise RuntimeError("PDF not produced.")
     return pdf_path
-
+ 
 def cleanup_aux_files(job_id: str) -> None:
     work_dir = OUTPUT_DIR / job_id
     if not work_dir.exists(): return
@@ -346,11 +381,11 @@ def cleanup_aux_files(job_id: str) -> None:
         if f.suffix in {".aux",".log",".out",".toc",".tex"}:
             try: f.unlink()
             except OSError: pass
-
+ 
 # ══════════════════════════════════════════════════════════════════════════════
 # Google Drive OAuth
 # ══════════════════════════════════════════════════════════════════════════════
-
+ 
 def get_drive_credentials():
     try:
         from google.auth.transport.requests import Request
@@ -367,10 +402,10 @@ def get_drive_credentials():
             log.warning("Token refresh failed: %s", e)
             return None
     return creds if (creds and creds.valid) else None
-
+ 
 # Store code verifier between auth request and callback
 _oauth_state = {}
-
+ 
 def get_oauth_auth_url() -> str:
     from google_auth_oauthlib.flow import Flow
     if not OAUTH_FILE.exists():
@@ -387,27 +422,27 @@ def get_oauth_auth_url() -> str:
     # Save flow so callback can reuse it with same code verifier
     _oauth_state["flow"] = flow
     return auth_url
-
-
+ 
+ 
 def exchange_oauth_code(code: str) -> None:
     from google_auth_oauthlib.flow import Flow
-
+ 
     # Reuse the same flow object that generated the auth URL
     flow = _oauth_state.pop("flow", None)
-
+ 
     if flow is None:
         # Fallback: create fresh flow (won't have code verifier — may fail)
         flow = Flow.from_client_secrets_file(
             str(OAUTH_FILE), scopes=SCOPES,
             redirect_uri=f"{APP_BASE_URL}/oauth2callback",
         )
-
+ 
     flow.fetch_token(code=code)
     TOKEN_FILE.parent.mkdir(exist_ok=True)
     with open(TOKEN_FILE, "wb") as f:
         pickle.dump(flow.credentials, f)
     log.info("OAuth token saved.")
-
+ 
 def upload_to_google_drive(pdf_path: Path, filename: str) -> str:
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
@@ -423,30 +458,42 @@ def upload_to_google_drive(pdf_path: Path, filename: str) -> str:
     link = f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
     log.info("Uploaded to Drive: %s", link)
     return link
-
-
+ 
+ 
 # ══════════════════════════════════════════════════════════════════════════════
 # Background job processor
 # ══════════════════════════════════════════════════════════════════════════════
-
+ 
+def _set_step(job_id: str, step: int) -> None:
+    """Update the current processing step visible to the status poller."""
+    job = JOB_STORE.get(job_id)
+    if job:
+        job["step"] = step
+ 
+ 
 def _process_job(job_id: str, jd: str, mode: str, company: str, role: str):
     """Runs in a background thread. Stores result in JOB_STORE."""
     try:
         jd    = jd[:MAX_JD_CHARS]
+ 
+        _set_step(job_id, 1)
         latex = read_base_resume()
-
-        jd_analysis = validate_jd_analysis(
-            call_anthropic_json(JD_ANALYSIS_PROMPT,
-                f"LATEX RESUME:\n{latex}\n\nJOB DESCRIPTION:\n{jd}\n")
+ 
+        # ── Single combined call: Sonnet does JD analysis + resume rewrite together ──
+        _set_step(job_id, 2)
+        combined = call_anthropic_json(
+            COMBINED_PROMPT,
+            f"Optimization mode: {mode}\nTarget Company: {company}\nTarget Role: {role}\n\n"
+            f"LATEX RESUME:\n{latex}\n\nJOB DESCRIPTION:\n{jd}\n",
+            model=MODEL_NAME,
+            max_tokens=6000,
         )
-
-        result = validate_generation_result(
-            call_anthropic_json(GENERATION_PROMPT,
-                f"Optimization mode: {mode}\nTarget Company: {company}\nTarget Role: {role}\n\n"
-                f"LATEX RESUME:\n{latex}\n\nJOB DESCRIPTION:\n{jd}\n\n"
-                f"JD ANALYSIS:\n{json.dumps(jd_analysis,ensure_ascii=False)}")
-        )
-
+ 
+        _set_step(job_id, 4)
+        jd_analysis = validate_jd_analysis(combined.get("jdAnalysis", {}))
+        result      = validate_generation_result({k: v for k, v in combined.items() if k != "jdAnalysis"})
+ 
+        _set_step(job_id, 6)
         missing, recomputed_cov = compute_missing_keywords(jd_analysis, result["latexCode"])
         result["missingKeywords"]   = missing
         result["categoryCoverage"]  = recomputed_cov
@@ -454,7 +501,8 @@ def _process_job(job_id: str, jd: str, mode: str, company: str, role: str):
         result["jdAnalysisSummary"] = jd_analysis["summary"]
         result["jdWeakCategories"]  = jd_analysis["weakCategories"]
         result["jdMustCover"]       = jd_analysis["mustCover"]
-
+ 
+        _set_step(job_id, 7)
         pdf_name = "Charan_Reddy_Chintalapuri.pdf"
         drive_pdf=build_pdf_filename(company, role)
         try:
@@ -467,7 +515,7 @@ def _process_job(job_id: str, jd: str, mode: str, company: str, role: str):
             result["download_url"]    = None
             result["pdf_filename"]    = None
             result["compile_warning"] = str(exc)
-
+ 
         if result.get("download_url"):
             creds = get_drive_credentials()
             if creds:
@@ -480,30 +528,30 @@ def _process_job(job_id: str, jd: str, mode: str, company: str, role: str):
                     result["drive_warning"] = str(exc)
             else:
                 result["drive_warning"] = "not_authorized"
-
+ 
         JOB_STORE[job_id] = {"status": "done", "result": result, "error": None}
         log.info("Job %s completed successfully.", job_id)
-
+ 
     except Exception as exc:
         log.exception("Job %s failed: %s", job_id, exc)
         JOB_STORE[job_id] = {"status": "error", "result": None, "error": str(exc)}
-
+ 
 # ══════════════════════════════════════════════════════════════════════════════
 # HTTP Handler
 # ══════════════════════════════════════════════════════════════════════════════
-
+ 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         log.info("[%s] %s", self.address_string(), format % args)
-
+ 
     def send_cors(self):
         self.send_header("Access-Control-Allow-Origin","*")
         self.send_header("Access-Control-Allow-Methods","POST, GET, OPTIONS")
         self.send_header("Access-Control-Allow-Headers","Content-Type")
-
+ 
     def do_OPTIONS(self):
         self.send_response(200); self.send_cors(); self.end_headers()
-
+ 
     def _do_GET_original(self):
         if self.path == "/auth":
             try:
@@ -514,7 +562,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._json_error(500, f"Could not build auth URL: {e}")
             return
-
+ 
         if self.path.startswith("/oauth2callback"):
             parsed = urllib.parse.urlparse(self.path)
             params = urllib.parse.parse_qs(parsed.query)
@@ -533,11 +581,11 @@ class Handler(BaseHTTPRequestHandler):
                 log.error("OAuth callback error: %s", e)
                 self._html_page("OAuth Error", f"Failed to connect: {e}")
             return
-
+ 
         if self.path == "/drive-status":
             creds = get_drive_credentials()
             self._json_ok({"connected": creds is not None}); return
-
+ 
         if self.path == "/resume-status":
             exists = RESUME_FILE.exists()
             preview = ""
@@ -545,10 +593,10 @@ class Handler(BaseHTTPRequestHandler):
                 try: preview = RESUME_FILE.read_text(encoding="utf-8")[:300]
                 except: pass
             self._json_ok({"saved":exists,"preview":preview,"path":str(RESUME_FILE)}); return
-
+ 
         if self.path.startswith("/download/"):
             self._serve_pdf(self.path); return
-
+ 
         if self.path == "/":
             if not HTML_FILE.exists():
                 self.send_response(404); self.end_headers()
@@ -558,9 +606,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type","text/html; charset=utf-8")
             self.send_cors(); self.end_headers()
             self.wfile.write(content); return
-
+ 
         self.send_response(404); self.send_cors(); self.end_headers()
-
+ 
     def _serve_pdf(self, path: str):
         m = re.fullmatch(r"/download/([0-9a-f]{32})/([^/]+\.pdf)", path)
         if not m:
@@ -576,7 +624,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length",str(len(data)))
         self.send_cors(); self.end_headers()
         self.wfile.write(data)
-
+ 
     def _html_page(self, title: str, message: str):
         html = f"""<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><title>{title}</title>
@@ -595,73 +643,101 @@ p{{color:#8A8892;line-height:1.6}}a{{color:#C8F060}}
         self.send_header("Content-Type","text/html; charset=utf-8")
         self.send_cors(); self.end_headers()
         self.wfile.write(html)
-
+ 
     def do_POST(self):
         length = int(self.headers.get("Content-Length",0))
         body   = self.rfile.read(length)
         if self.path == "/tailor": self._handle_tailor(body)
         else: self.send_response(404); self.send_cors(); self.end_headers()
-
+ 
     def do_GET(self, *args, **kwargs):
         # Status polling endpoint
         if self.path.startswith("/status/"):
             job_id = self.path[len("/status/"):]
             self._handle_status(job_id); return
         self._do_GET_original()
-
+ 
     def _handle_tailor(self, body: bytes):
         """Start async job and return job_id immediately to avoid proxy timeout."""
         try:
             if not API_KEY or API_KEY == "YOUR_ANTHROPIC_KEY_HERE":
                 self._json_error(500,"Missing ANTHROPIC_API_KEY."); return
-
+ 
             payload = json.loads(body or b"{}")
             jd      = str(payload.get("jd","")).strip()
             mode    = str(payload.get("mode","full")).strip() or "full"
             company = str(payload.get("company","")).strip() or "Company"
             role    = str(payload.get("role","")).strip() or "Role"
-
+ 
             if not jd: self._json_error(400,"Job description is required."); return
-
+ 
             job_id = uuid.uuid4().hex
-            JOB_STORE[job_id] = {"status": "pending", "result": None, "error": None}
-
+            JOB_STORE[job_id] = {
+                "status": "pending", "result": None, "error": None,
+                "step": 0, "created_at": time.time(),
+            }
+ 
             # Start background thread so we return immediately
             t = threading.Thread(target=_process_job,
                                  args=(job_id, jd, mode, company, role),
                                  daemon=True)
             t.start()
-
+ 
             self._json_ok({"job_id": job_id})
-
+ 
         except json.JSONDecodeError as e:
             self._json_error(400, f"Invalid JSON: {e}")
         except Exception as e:
             log.exception("Unexpected error starting job")
             self._json_error(500, f"Unexpected error: {e}")
-
+ 
     def _handle_status(self, job_id: str):
         """Poll endpoint — returns job status and result when done."""
         job = JOB_STORE.get(job_id)
         if not job:
             self._json_error(404, "Job not found."); return
         self._json_ok(job)
-
+ 
     def _json_ok(self, data):
         body = json.dumps(data).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type","application/json")
         self.send_cors(); self.end_headers()
         self.wfile.write(body)
-
+ 
     def _json_error(self, code, message):
         body = json.dumps({"error":message}).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type","application/json")
         self.send_cors(); self.end_headers()
         self.wfile.write(body)
-
-
+ 
+ 
+# ══════════════════════════════════════════════════════════════════════════════
+# JOB_STORE housekeeping  (BUG FIX: without this the dict grows forever)
+# ══════════════════════════════════════════════════════════════════════════════
+ 
+def _cleanup_jobs_loop(ttl_seconds: int = 3600, interval_seconds: int = 300) -> None:
+    """Background thread: evicts finished/failed jobs older than ttl_seconds."""
+    while True:
+        time.sleep(interval_seconds)
+        cutoff = time.time() - ttl_seconds
+        evicted = []
+        for jid, job in list(JOB_STORE.items()):
+            if job.get("status") in ("done", "error") and job.get("created_at", 0) < cutoff:
+                evicted.append(jid)
+        for jid in evicted:
+            JOB_STORE.pop(jid, None)
+            try:
+                work_dir = OUTPUT_DIR / jid
+                if work_dir.exists():
+                    shutil.rmtree(work_dir)
+            except OSError:
+                pass
+        if evicted:
+            log.info("Cleaned up %d expired job(s) from JOB_STORE.", len(evicted))
+ 
+ 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     print("="*60)
@@ -682,6 +758,10 @@ if __name__ == "__main__":
     print()
     print(f"  Running at 0.0.0.0:{port}")
     print("  Press Ctrl+C to stop.")
+ 
+    # Start background job-store cleaner
+    cleaner = threading.Thread(target=_cleanup_jobs_loop, daemon=True)
+    cleaner.start()
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     try: server.serve_forever()
     except KeyboardInterrupt: print("\nServer stopped.")
