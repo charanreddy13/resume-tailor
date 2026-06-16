@@ -36,7 +36,7 @@ LOG_DIR.mkdir(exist_ok=True)
 MAX_RESUME_CHARS    = 50000
 MAX_JD_CHARS        = 50000
 REQUEST_TIMEOUT     = 75
-MODEL_NAME          = "claude-sonnet-4-20250514"
+MODEL_NAME          = "claude-sonnet-4-5"
 COMPILE_TIMEOUT_SEC = 120
 
 DRIVE_FOLDER_ID = os.environ.get("DRIVE_FOLDER_ID", "")
